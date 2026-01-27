@@ -16,7 +16,5 @@
 - **AI/Cloud:** Azure OpenAI, Azure AI Search (RAG), Azure AI Speech (TTS)
 - **Data:** Azure Database for PostgreSQL, Azure Event Grid (MQTT)
 
-## 👥 팀 구성
-- **Front-end & Planning (4명):** UI/UX, 멘토 서비스 기획, 교육 시나리오 설계.
-- **Back-end (2명):** 시뮬레이션 엔진 개발, Azure 인프라 구축 및 LLM 오케스트레이션.
+
 
