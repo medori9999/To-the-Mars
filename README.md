@@ -8,7 +8,7 @@
 ## 📚 핵심 연구 기반 (Key Research)
 이 프로젝트는 아래 두 가지 핵심 논문의 방법론을 하이브리드로 결합하여 구현됩니다.
 1. **ASFM (Agent-based Simulated Financial Market):** 실제 오더 매칭 시스템 및 에이전트 기반 금융 시장 시뮬레이션.
-2. **AgentSociety:** 대규모 LLM 에이전트의 사회적 상호작용 및 욕구/감정 모델링.
+2. **AgentSociety:** 대규모 LLM 에이전트의 사회적 상호작용 및 욕구/감정 모델링
 
 ## 🛠 기술 스택 (Tech Stack)
 - **Frontend:** React
