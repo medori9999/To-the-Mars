@@ -18,8 +18,6 @@ class OrderType(str, Enum):
     LIMIT = "LIMIT"   # 특정 가격에 사겠다
     MARKET = "MARKET" # 지금 당장 사겠다
 
-# [수정됨] InvestmentType 제거함 (멘토 LLM의 역할로 이동)
-
 # ==========================================
 # 2. Core Models (데이터 구조 정의)
 # ==========================================
@@ -30,44 +28,34 @@ class Company(BaseModel):
     """
     ticker: str = Field(..., description="종목 코드 (예: IT008)")
     name: str = Field(..., description="기업 이름")
-    sector: str = Field(..., description="산업 분야")
+    sector: str = Field(..., description="산업 분야 (프론트엔드 카테고리: 전자, IT, 바이오, 금융)")
     description: str = Field(..., description="사업 내용")
     current_price: float = Field(..., description="현재 주가")
     total_shares: int = Field(default=1000000, description="총 발행 주식 수")
 
 class AgentState(BaseModel):
     """
-    AgentSociety 논문의 심리/상태 모델 (Agent의 핵심)
-    투자인가? 보다는 심리 상태인가? 에 집중
+    AgentSociety 논문의 심리/상태 모델
     """
-    # 0.0(낮음) ~ 1.0(높음)
-    safety_needs: float = Field(0.5, description="안전 욕구 (높으면 현금 보유 선호)")
-    social_needs: float = Field(0.5, description="사회적 욕구 (높으면 남들 따라함)")
-    
-    # 감정 상태 (뉴스와 시장 상황에 따라 변함)
-    fear_index: float = Field(0.0, description="공포 지수 (폭락장 트리거)")
-    greed_index: float = Field(0.0, description="탐욕 지수 (버블 형성 트리거)")
-    
-    # 단기 기억 (가장 최근에 본 뉴스나 사건)
-    current_context: Optional[str] = Field(None, description="현재 에이전트의 행동 원인")
+    safety_needs: float = Field(0.5, description="안전 욕구")
+    social_needs: float = Field(0.5, description="사회적 욕구")
+    fear_index: float = Field(0.0, description="공포 지수")
+    greed_index: float = Field(0.0, description="탐욕 지수")
+    current_context: Optional[str] = Field(None, description="현재 행동 원인")
 
 class Agent(BaseModel):
     """
-    시뮬레이션 참여자 (일반 주린이/개미 에이전트)
+    시뮬레이션 참여자 (에이전트)
     """
     agent_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str # 예: "Agent_104"
-    
-    # 자산 (Financial)
-    cash_balance: float = Field(default=100000.0, description="보유 현금")
-    portfolio: Dict[str, int] = Field(default_factory=dict, description="보유 주식 {티커: 수량}")
-    
-    # 심리 (Psychological) - 이제 여기가 메인입니다
+    name: str 
+    cash_balance: float = Field(default=100000.0)
+    portfolio: Dict[str, int] = Field(default_factory=dict)
     state: AgentState = Field(default_factory=AgentState)
 
 class Order(BaseModel):
     """
-    주식 주문 (매칭 엔진의 입력값)
+    주식 주문
     """
     order_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str
@@ -81,7 +69,7 @@ class Order(BaseModel):
 
 class MarketNews(BaseModel):
     """
-    뉴스 및 외부 충격 (Shock) 데이터
+    뉴스 데이터
     """
     news_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     headline: str
@@ -90,21 +78,51 @@ class MarketNews(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 # ==========================================
-# 3. Initial Data Helper
+# 3. Initial Data Helper (카테고리별 3개씩 배치)
 # ==========================================
 
 def get_initial_companies() -> List[Company]:
-    """ASFM 논문 기업 데이터 (그대로 유지)"""
+    """
+    프론트엔드 카테고리(전자, IT, 바이오, 금융)에 맞춘 12개 기업 리스트
+    """
     return [
-        Company(ticker="RE001", name="Real Estate Co.", sector="Real Estate", current_price=20.0, description="주거 및 상업용 부동산 개발"),
-        Company(ticker="EN002", name="Energy Corp.", sector="Energy", current_price=30.0, description="에너지 기업"),
-        Company(ticker="IN003", name="Industrial Sol.", sector="Industrial", current_price=40.0, description="기계 장비 및 자동화"),
-        Company(ticker="CC004", name="Consumer Tech", sector="Consumer Cyclical", current_price=50.0, description="전자제품 제조"),
-        Company(ticker="DC005", name="Daily Goods", sector="Consumer Defensive", current_price=60.0, description="식음료 생산"),
-        Company(ticker="HC006", name="Health Care Inc.", sector="Healthcare", current_price=70.0, description="의료 기기 및 제약"),
-        Company(ticker="FI007", name="Finance Group", sector="Financial", current_price=80.0, description="금융 서비스"),
-        Company(ticker="IT008", name="InfoTech Systems", sector="Technology", current_price=90.0, description="IT 소프트웨어"),
-        Company(ticker="CS009", name="Comm Services", sector="Communication", current_price=100.0, description="통신 서비스"),
-        Company(ticker="UT010", name="Utilities Power", sector="Utilities", current_price=110.0, description="전력 공급"),
-        Company(ticker="BM011", name="Basic Materials", sector="Basic Materials", current_price=120.0, description="화학 소재"),
+        # ------------------------------------------------
+        # 1. 전자 (Electronics)
+        # ------------------------------------------------
+        Company(ticker="SS011", name="삼송전자", sector="전자", current_price=72000.0, 
+                description="글로벌 반도체 및 모바일 시장의 절대 강자 (삼성전자 모티브)"),
+        Company(ticker="JW004", name="재웅시스템", sector="전자", current_price=12000.0, 
+                description="차세대 시스템 반도체 설계 및 임베디드 솔루션"),
+        Company(ticker="AT010", name="에이펙스테크", sector="전자", current_price=55000.0, 
+                description="산업용 로봇 팔 및 자동화 정밀 기기 제조 (구 도윤테크)"),
+
+        # ------------------------------------------------
+        # 2. IT (Information Technology)
+        # ------------------------------------------------
+        Company(ticker="MH012", name="마이크로하드", sector="IT", current_price=350000.0, 
+                description="OS 및 생성형 AI 기술을 선도하는 소프트웨어 황제주 (MS 모티브)"),
+        Company(ticker="SH001", name="소현컴퍼니", sector="IT", current_price=15000.0, 
+                description="글로벌 웹 플랫폼 및 클라우드 서비스 운영"),
+        Company(ticker="ND008", name="넥스트데이터", sector="IT", current_price=27500.0, 
+                description="초거대 데이터센터 인프라 및 서버 호스팅 (구 태훈데이터)"),
+
+        # ------------------------------------------------
+        # 3. 바이오 (Bio & Healthcare)
+        # ------------------------------------------------
+        Company(ticker="JH005", name="진호랩", sector="바이오", current_price=45000.0, 
+                description="mRNA 기반 혁신 신약 개발 및 유전자 분석"),
+        Company(ticker="SE002", name="상은테크놀로지", sector="바이오", current_price=22000.0, 
+                description="정밀 의료 진단 장비 및 헬스케어 디바이스 제조"),
+        Company(ticker="IA009", name="인사이트애널리틱스", sector="바이오", current_price=19500.0, 
+                description="AI 기반 의료 영상 분석 및 질병 예측 솔루션 (구 지수애널리틱스)"),
+
+        # ------------------------------------------------
+        # 4. 금융 (Finance)
+        # ------------------------------------------------
+        Company(ticker="YJ003", name="예진캐피탈", sector="금융", current_price=8500.0, 
+                description="유망 스타트업 발굴 및 글로벌 자산 운용"),
+        Company(ticker="SW006", name="선우솔루션", sector="금융", current_price=18000.0, 
+                description="블록체인 기반 핀테크 결제 시스템 및 보안 솔루션"),
+        Company(ticker="QD007", name="퀀텀디지털", sector="금융", current_price=32000.0, 
+                description="양자 암호 통신 및 초고속 알고리즘 트레이딩 시스템 (구 민지디지털)"),
     ]

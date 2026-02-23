@@ -1,179 +1,144 @@
-from typing import List, Dict, Optional
+from sqlalchemy.orm import Session
+from database import DBCompany, DBAgent, DBTrade
+from domain_models import Order, OrderSide
 from datetime import datetime
-from domain_models import Company, Order, OrderType, OrderSide, get_initial_companies
 
 class MarketEngine:
     def __init__(self):
-        # 1. 초기 기업 데이터 로드 (ASFM 논문 데이터)
-        self.companies: Dict[str, Company] = {c.ticker: c for c in get_initial_companies()}
-        
-        # 2. 오더북 (주문 장부) 초기화
-        # 구조: { "IT008": { "BUY": [], "SELL": [] } }
-        self.order_books: Dict[str, Dict[str, List[Order]]] = {
-            ticker: {"BUY": [], "SELL": []} for ticker in self.companies.keys()
-        }
-        
-        # 3. 체결 내역 (로그)
-        self.trade_logs: List[Dict] = []
+        # 인메모리 호가창 (DB에는 느려서 못 담음)
+        # 구조: {'IT008': {'BUY': [], 'SELL': []}}
+        self.order_books = {}
 
-    def place_order(self, order: Order) -> Dict:
+    def place_order(self, db: Session, order: Order, sim_time: datetime = None):
         """
-        주문을 받아서 장부에 적고, 매칭을 시도하는 함수
-        (나중에 프론트엔드에서 '매수' 버튼 누르면 이 함수가 호출됨)
+        주문을 받아서 호가창(Order Book)에 등록하고, 매칭을 시도합니다.
+        sim_time: 시뮬레이션 상의 현재 시간 (None이면 현실 시간 사용)
         """
-        # 1. 주문 유효성 검사 (시장가 주문인데 가격이 없거나 등등)
-        if order.order_type == OrderType.LIMIT and order.price is None:
-            return {"status": "ERROR", "msg": "지정가 주문은 가격이 필수입니다."}
-
-        # 2. 장부에 등록
         ticker = order.ticker
         if ticker not in self.order_books:
-            return {"status": "ERROR", "msg": f"존재하지 않는 종목입니다: {ticker}"}
+            self.order_books[ticker] = {'BUY': [], 'SELL': []}
 
-        # 매수/매도 리스트에 추가
-        self.order_books[ticker][order.side.value].append(order)
+        # 1. 유효성 검사 (돈/주식 있는지)
+        agent = db.query(DBAgent).filter(DBAgent.agent_id == order.agent_id).first()
+        if not agent: return {"status": "FAIL", "msg": "에이전트 없음"}
         
-        # 3. 매칭 엔진 가동 (즉시 체결 시도)
-        trades = self._match_orders(ticker)
+        # (간단한 검증: 주문 넣을 때 자산 가압류는 안 하고, 체결될 때 다시 체크함 - 현실은 가압류가 맞지만 시뮬레이션 편의상)
         
-        return {
-            "status": "SUCCESS",
-            "order_id": order.order_id,
-            "trades_executed": len(trades),
-            "current_price": self.companies[ticker].current_price
+        # 2. 주문서 작성 (가격을 AI가 정한 가격으로)
+        # 지정가 주문으로 간주합니다.
+        new_order = {
+            "agent_id": order.agent_id,
+            "price": int(order.price) if order.price else 0, # 시장가면 0이지만 여기선 다 지정가로 옴
+            "quantity": order.quantity,
+            "side": order.side,
+            "timestamp": sim_time or datetime.now() # [수정] 가상 시간 적용
         }
 
-    def _match_orders(self, ticker: str) -> List[Dict]:
-        """
-        [핵심 로직] ASFM 논문의 Price-Time Priority 매칭 알고리즘
-        """
+        # 3. 호가창에 등록
         book = self.order_books[ticker]
-        executed_trades = []
+        if order.side == OrderSide.BUY:
+            book['BUY'].append(new_order)
+            # 매수: 비싼 가격 부른 사람이 우선순위 (내림차순 정렬)
+            book['BUY'].sort(key=lambda x: x['price'], reverse=True)
+        else:
+            book['SELL'].append(new_order)
+            # 매도: 싼 가격 부른 사람이 우선순위 (오름차순 정렬)
+            book['SELL'].sort(key=lambda x: x['price'])
 
-        # 매칭 루프: 매수와 매도 주문이 둘 다 있어야 매칭 시도
-        while book["BUY"] and book["SELL"]:
-            # 1. 정렬 (Priority 결정)
-            # 매수: 비싸게 산다는 사람 순서 (내림차순)
-            # 매도: 싸게 판다는 사람 순서 (오름차순)
-            # (시장가 주문은 가장 높은 우선순위로 처리해야 하지만, 일단 간단하게 지정가 기준 정렬)
-            book["BUY"].sort(key=lambda x: x.price if x.price else float('inf'), reverse=True)
-            book["SELL"].sort(key=lambda x: x.price if x.price else 0.0)
+        # 4. 매칭 엔진 가동 (거래 성사 확인)
+        # [수정] sim_time 전달
+        return self._match_orders(db, ticker, sim_time)
 
-            best_buy = book["BUY"][0]
-            best_sell = book["SELL"][0]
-
-            # 2. 가격 조건 확인 (살 가격 >= 팔 가격)이어야 거래 성사
-            # (시장가는 무조건 체결된다고 가정)
-            buy_price = best_buy.price if best_buy.price else best_sell.price
-            sell_price = best_sell.price if best_sell.price else best_buy.price
-
-            if buy_price >= sell_price:
-                # 거래 체결!
-                trade_price = sell_price # 보통 먼저 걸려있던 주문 가격으로 체결됨
-                trade_qty = min(best_buy.quantity, best_sell.quantity)
-
-                # 3. 기록 및 상태 업데이트
-                trade_record = {
-                    "ticker": ticker,
-                    "price": trade_price,
-                    "quantity": trade_qty,
-                    "buyer_id": best_buy.agent_id,
-                    "seller_id": best_sell.agent_id,
-                    "timestamp": datetime.now()
-                }
-                executed_trades.append(trade_record)
-                self.trade_logs.append(trade_record)
-
-                # 4. 주가 업데이트 (ASFM: 체결가로 현재가 갱신)
-                self.companies[ticker].current_price = trade_price
-
-                # 5. 물량 차감 및 주문 완료 처리
-                best_buy.quantity -= trade_qty
-                best_sell.quantity -= trade_qty
-
-                if best_buy.quantity == 0:
-                    book["BUY"].pop(0) # 대기열에서 삭제
-                    best_buy.status = "FILLED"
-                
-                if best_sell.quantity == 0:
-                    book["SELL"].pop(0) # 대기열에서 삭제
-                    best_sell.status = "FILLED"
-                
-                print(f"✨ [체결 알림] {ticker} {trade_qty}주 @ {trade_price}원 (현재가 갱신!)")
-
-            else:
-                # 가격이 안 맞으면 매칭 종료 (더 볼 필요 없음)
-                break
+    def _match_orders(self, db: Session, ticker: str, sim_time: datetime = None):
+        book = self.order_books[ticker]
+        logs = []
         
-        return executed_trades
+        # 매칭 반복: (가장 비싼 매수 호가) >= (가장 싼 매도 호가) 일 때 거래 성사
+        while book['BUY'] and book['SELL']:
+            best_buy = book['BUY'][0]   # 최고가 매수 주문
+            best_sell = book['SELL'][0] # 최저가 매도 주문
+            
+            # 가격이 안 맞으면 거래 안 됨 (스프레드 존재)
+            if best_buy['price'] < best_sell['price']:
+                break
+            
+            # --- 거래 체결! ---
+            # 🔥 [핵심 수정] 무조건 매도자 가격으로 꽂아버리는 버그 수정
+            # 매수자와 매도자가 부른 가격의 딱 중간값(평균)으로 합리적으로 체결시킵니다.
+            trade_price = int((best_buy['price'] + best_sell['price']) / 2)
+            trade_qty = min(best_buy['quantity'], best_sell['quantity'])
+            
+            # DB 업데이트 (돈/주식 교환)
+            # [수정] sim_time 전달
+            self._execute_trade(db, ticker, best_buy, best_sell, trade_price, trade_qty, sim_time)
+            
+            logs.append(f"✅ 체결! {trade_price}원 ({trade_qty}주)")
+            
+            # 수량 차감 및 주문 삭제
+            best_buy['quantity'] -= trade_qty
+            best_sell['quantity'] -= trade_qty
+            
+            if best_buy['quantity'] <= 0: book['BUY'].pop(0)
+            if best_sell['quantity'] <= 0: book['SELL'].pop(0)
 
-    def get_market_status(self):
-        """
-        프론트엔드 대시보드용 데이터 반환
-        """
-        status = {}
-        for ticker, comp in self.companies.items():
-            status[ticker] = {
-                "name": comp.name,
-                "current_price": comp.current_price,
-                "buy_depth": len(self.order_books[ticker]["BUY"]),
-                "sell_depth": len(self.order_books[ticker]["SELL"])
-            }
-        return status
+        if logs:
+            return {"status": "SUCCESS", "msg": ", ".join(logs)}
+        else:
+            return {"status": "PENDING", "msg": "주문 접수됨 (체결 대기 중)"}
 
-# ==========================================
-# 🚀 테스트 시나리오 (터미널 실행용)
-# ==========================================
-if __name__ == "__main__":
-    # 1. 엔진 시동
-    engine = MarketEngine()
-    print("=== 📈 주식 시장 시뮬레이션 엔진 시작 ===")
-    
-    # IT008(기술주) 현재가 확인
-    target_ticker = "IT008"
-    print(f"[{target_ticker}] 시작가: {engine.companies[target_ticker].current_price}원")
-
-    # 2. [상황] 사용자가 90원에 10주 매수 주문 (대기)
-    user_order = Order(
-        agent_id="User_Me",
-        ticker=target_ticker,
-        side=OrderSide.BUY,
-        order_type=OrderType.LIMIT,
-        quantity=10,
-        price=90.0
-    )
-    engine.place_order(user_order)
-    print(f"👉 사용자 매수 주문 등록 (90원, 10주)")
-
-    # 3. [상황] 에이전트가 95원에 5주 매도 주문 (비싸서 체결 안됨)
-    agent_order_1 = Order(
-        agent_id="Agent_Bot_1",
-        ticker=target_ticker,
-        side=OrderSide.SELL,
-        order_type=OrderType.LIMIT,
-        quantity=5,
-        price=95.0
-    )
-    engine.place_order(agent_order_1)
-    print(f"👉 에이전트1 매도 주문 등록 (95원, 5주) -> 체결 안됨 예상")
-
-    # 4. [상황] 급한 에이전트가 85원에 5주 투매 (체결 되어야 함!)
-    agent_order_2 = Order(
-        agent_id="Agent_Bot_Panic",
-        ticker=target_ticker,
-        side=OrderSide.SELL,
-        order_type=OrderType.LIMIT,
-        quantity=5,
-        price=85.0
-    )
-    print(f"👉 에이전트2 패닉 셀링 주문 등록 (85원, 5주) -> 체결 예상!")
-    result = engine.place_order(agent_order_2)
-
-    # 5. 결과 확인
-    print("\n=== 🏁 최종 시장 상태 ===")
-    status = engine.get_market_status()[target_ticker]
-    print(f"종목: {status['name']}")
-    print(f"현재 주가: {status['current_price']}원 (거래로 인해 변동됨)")
-    print(f"남은 매수 대기: {status['buy_depth']}건")
-    print(f"남은 매도 대기: {status['sell_depth']}건")
-    
+    def _execute_trade(self, db: Session, ticker, buy_order, sell_order, price, qty, sim_time=None):
+        # 구매자/판매자 DB 로드
+        buyer = db.query(DBAgent).filter(DBAgent.agent_id == buy_order['agent_id']).first()
+        seller = db.query(DBAgent).filter(DBAgent.agent_id == sell_order['agent_id']).first()
+        company = db.query(DBCompany).filter(DBCompany.ticker == ticker).first()
+        
+        if not buyer or not seller: return # 에러 방지
+        
+        total_amt = price * qty
+        
+        # 1. 구매자 처리 (돈 차감, 주식 증가)
+        if buyer.cash_balance >= total_amt:
+            buyer.cash_balance -= total_amt
+            port = dict(buyer.portfolio)
+            port[ticker] = port.get(ticker, 0) + qty
+            buyer.portfolio = port
+            
+        # 2. 판매자 처리 (돈 증가, 주식 차감)
+        # (판매자는 이미 호가창 올릴 때 주식 있다고 가정하지만 한번 더 체크)
+        if seller.portfolio.get(ticker, 0) >= qty:
+            seller.cash_balance += total_amt
+            port = dict(seller.portfolio)
+            port[ticker] -= qty
+            if port[ticker] <= 0: del port[ticker]
+            seller.portfolio = port
+            
+        # -------------------------------------------------------------
+        # 🔥 3. 주가 및 실시간 등락률(%) 업데이트 로직
+        # -------------------------------------------------------------
+        old_price = company.current_price
+        old_change_rate = company.change_rate or 0.0
+        
+        # 기존 가격과 등락률을 이용해 최초 기준가(Base Price)를 역산합니다.
+        try:
+            base_price = old_price / (1.0 + (old_change_rate / 100.0))
+        except:
+            base_price = old_price
+            
+        # 새로운 체결가(price)를 바탕으로 새 등락률 계산
+        if base_price > 0:
+            new_change_rate = ((price - base_price) / base_price) * 100.0
+        else:
+            new_change_rate = 0.0
+            
+        # DB에 현재가와 등락률 모두 저장 (소수점 2자리까지만 예쁘게)
+        company.current_price = float(price)
+        company.change_rate = round(float(new_change_rate), 2)
+        
+        # 4. 거래 기록
+        trade = DBTrade(
+            ticker=ticker, price=price, quantity=qty,
+            buyer_id=buyer.agent_id, seller_id=seller.agent_id,
+            timestamp=sim_time or datetime.now() # [수정] 현실 시간이 아닌 가상 시간 기록
+        )
+        db.add(trade)
+        db.commit()
