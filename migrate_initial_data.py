@@ -22,7 +22,8 @@ def migrate():
                 name=c.name,
                 sector=c.sector,
                 # description 컬럼은 database.py에 없으므로 뺍니다. (에러 방지)
-                current_price=c.current_price
+                current_price=c.current_price,
+                prev_close_price=c.current_price
             )
             db.add(db_company)
         

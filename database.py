@@ -42,6 +42,8 @@ class DBCompany(Base):
     sector = Column(String)
     current_price = Column(Float)
     change_rate = Column(Float, default=0.0)
+    # 🔥 [추가] 전일 종가 저장을 위한 필드 (실시간 등락률 계산의 기준점)
+    prev_close_price = Column(Float, default=0.0)
 
 class DBAgent(Base):
     __tablename__ = "agents"
@@ -49,7 +51,7 @@ class DBAgent(Base):
     id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(String, unique=True, index=True)
     psychology = Column(JSON, default={})
-    cash_balance = Column(Float, default=1000000.0)
+    cash_balance = Column(Float, default=1000000.0) # 에이전트 기본금 100만 유지
     portfolio = Column(JSON, default={})
 
 class DBTrade(Base):
@@ -79,10 +81,10 @@ class DBNews(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 # ---------------------------------------------------------
-# 3. 커뮤니티 & 종토방 모델 (통합 및 수정됨)
+# 3. 커뮤니티 & 종토방 모델
 # ---------------------------------------------------------
 class DBCommunity(Base):
-    __tablename__ = "community_posts" # (나중에 쓸 자유게시판)
+    __tablename__ = "community_posts" 
     
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String)
@@ -92,16 +94,15 @@ class DBCommunity(Base):
     created_at = Column(DateTime, default=datetime.now)
     parent_id = Column(Integer, nullable=True) 
 
-# [핵심 수정] 중복 제거하고 하나로 통일함
 class DBDiscussion(Base):
-    __tablename__ = "stock_discussions" # 실시간 종토방
+    __tablename__ = "stock_discussions" 
 
     id = Column(Integer, primary_key=True, index=True)
-    ticker = Column(String, index=True)       # 종목 코드
-    agent_id = Column(String)                 # 작성자 (에이전트 ID)
-    content = Column(String)                  # 댓글 내용
-    sentiment = Column(String)                # BULL(매수) / BEAR(매도)
-    created_at = Column(DateTime, default=datetime.utcnow) # 작성 시간
+    ticker = Column(String, index=True)       
+    agent_id = Column(String)                 
+    content = Column(String)                  
+    sentiment = Column(String)                
+    created_at = Column(DateTime, default=datetime.utcnow) 
 
 # ---------------------------------------------------------
 # DB 초기화 함수
