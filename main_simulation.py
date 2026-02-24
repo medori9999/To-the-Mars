@@ -304,7 +304,7 @@ async def run_simulation_loop():
                 all_tickers = [c.ticker for c in all_companies]
                
                 run_global_market_maker(db, all_tickers, current_sim_time)
-                all_agents = [a.agent_id for a in db.query(DBAgent.agent_id).all() if a.agent_id != "MARKET_MAKER"]
+                all_agents = [a.agent_id for a in db.query(DBAgent.agent_id).all() if a.agent_id != "MARKET_MAKER" and not a.agent_id.startswith("USER_")]
 
             # 15명 선발
             active_agents = random.sample(all_agents, k=15) if len(all_agents) > 15 else all_agents
