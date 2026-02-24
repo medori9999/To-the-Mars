@@ -85,12 +85,20 @@ def get_companies(db: Session = Depends(get_db)):
             DBTrade.timestamp >= sim_today_start
         ).scalar() or 0
         
+        # 🔥 [핵심 추가] DB에 썩어있는 -50%를 무시하고, 안전하게 실시간으로 등락률 재계산!
+        safe_prev_close = comp.prev_close_price if comp.prev_close_price > 0 else comp.current_price
+        
+        if safe_prev_close > 0:
+            real_change_rate = ((comp.current_price - safe_prev_close) / safe_prev_close) * 100.0
+        else:
+            real_change_rate = 0.0
+
         result.append({
             "ticker": comp.ticker,
             "name": comp.name,
             "sector": comp.sector,
             "current_price": comp.current_price,
-            "change_rate": comp.change_rate if comp.change_rate is not None else 0.0,
+            "change_rate": round(real_change_rate, 2), # 👈 직접 계산한 정확한 값을 소수점 2자리로 깎아서 보냄
             "volume": int(total_volume)
         })
     return result
