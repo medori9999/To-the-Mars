@@ -1,0 +1,91 @@
+import os
+import json
+import logging
+from openai import AsyncAzureOpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# 🔑 Azure OpenAI 세팅 (gpt-4o-mini 모델 적용 완료)
+client = AsyncAzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+)
+DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+
+async def agent_society_think(agent_name, agent_state, context_info, current_price, cash, portfolio_qty, avg_price, last_action_desc, market_sentiment):
+    # 🚀 [최적화 1] 프롬프트 다이어트 (Prompt Efficiency)
+    # 장황한 설명은 빼고, LLM이 알아듣는 최소한의 지시어만 남겨 토큰 낭비 차단
+    sys_prompt = (
+        "You are an AI stock trader. Act based on data.\n"
+        "Output strictly in JSON: {\"action\": \"BUY\"|\"SELL\"|\"HOLD\", \"quantity\": int, \"price\": int, \"thought_process\": \"short reason\"}"
+    )
+    
+    user_prompt = (
+        f"State: Cash {cash}, Shares {portfolio_qty} (Avg {avg_price}). Price: {current_price}\n"
+        f"News: {context_info}\n" 
+        f"Market: {market_sentiment}"
+    )
+
+    try:
+        # 값싸고 빠른 gpt-4o-mini 호출
+        response = await client.chat.completions.create(
+            model=DEPLOYMENT_NAME,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        # 🚀 [최적화 2] Self-Refine (자가 검증) 오퍼레이터
+        # 비싼 앙상블(3명 투표)을 폐지하고, 출력된 JSON이 규격에 안 맞을 때만 보수적(HOLD)으로 대처하여 무한 재호출 방지
+        raw_content = response.choices[0].message.content
+        decision = json.loads(raw_content)
+        
+        if decision.get("action") not in ["BUY", "SELL", "HOLD"]:
+            decision["action"] = "HOLD" 
+            
+        return decision
+
+    except Exception as e:
+        logging.error(f"LLM Error: {e}")
+        return {"action": "HOLD", "quantity": 0, "price": 0, "thought_process": "오류 발생으로 관망"}
+        # =================================================================
+# 🚀 [최적화 3] 정보 다이어트 & 동적 라우팅 (Dynamic Routing)
+# =================================================================
+# 1) 정보 다이어트: 뉴스나 커뮤니티 글을 전부 안 보내고 딱 2개만 끊어서 보냄!
+news_text = news_text[:200] # 텍스트 길이 강제 압축
+social_context = social_context[:150]
+
+# 2) 동적 라우팅: 장이 미쳐 날뛸 때는 LLM(토큰)을 쓰지 않고 30% 확률로 뇌동매매(충동 매매) 수행!
+if "급등세" in trend_info and random.random() < 0.3:
+    decision = {
+        "action": "BUY", 
+        "quantity": random.randint(10, 30), 
+        "price": int(company.current_price * 1.02), 
+        "thought_process": "시장 급등 포모(FOMO)로 인한 시장가 추격 매수 (LLM 스킵 - 토큰 0원!)"
+    }
+elif "급락세" in trend_info and random.random() < 0.3:
+    decision = {
+        "action": "SELL", 
+        "quantity": random.randint(10, 30), 
+        "price": int(company.current_price * 0.98), 
+        "thought_process": "시장 급락 공포로 인한 패닉 셀 (LLM 스킵 - 토큰 0원!)"
+    }
+else:
+    # 시장이 평온하거나 신중해야 할 때만 LLM을 호출 (비용 최적화)
+    decision = await agent_society_think(
+        agent_name=agent.agent_id,
+        agent_state=AgentState(**agent.psychology),
+        context_info=news_text,
+        current_price=company.current_price,
+        cash=agent.cash_balance,
+        portfolio_qty=portfolio_qty,
+        avg_price=avg_price,
+        last_action_desc=last_thought,
+        market_sentiment=f"{trend_info} / {social_context}"
+    )
+# =================================================================
